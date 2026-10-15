@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Flappy Bird</title>
+<style>
+  /* ===== GENEL STİLLER ===== */
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #1d2b3a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: "Courier New", monospace; /* retro, piksel hissi veren font */
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: manipulation;
+  }
+
+  /* Oyun alanını saran kutu (400x600) */
+  #oyun-kutusu {
+    position: relative;
+    width: 400px;
+    height: 600px;
+    max-width: 100vw;
+    max-height: 100vh;
+    border: 4px solid #0b1520;
+    box-shadow: 0 0 0 4px #f2c94c, 0 12px 40px rgba(0,0,0,.6);
+  }
+
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    image-rendering: pixelated; /* retro görünüm */
+    cursor: pointer;
+  }
+
+  /* Canvas üzerindeki yazı katmanları (başlangıç ve game over ekranı) */
+  .katman {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    color: #fff;
+    background: rgba(10, 20, 35, .55);
+    pointer-events: none; /* tıklamalar canvas'a geçsin */
+    padding: 20px;
+  }
+  .katman.gizli { display: none; }
+
+  .katman h1 {
+    margin: 0 0 14px;
+    font-size: 34px;
+    color: #f2c94c;
+    text-shadow: 3px 3px 0 #0b1520;
+  }
+  .katman p {
+    margin: 6px 0;
+    font-size: 17px;
+    line-height: 1.4;
+    text-shadow: 2px 2px 0 #0b1520;
+  }
+  .katman .skor-satiri {
+    font-size: 22px;
+    font-weight: bold;
+  }
+
+  /* "Yeniden Başla" butonu */
+  #yeniden-btn {
+    pointer-events: auto; /* buton tıklanabilir olsun */
+    margin-top: 18px;
+    padding: 12px 24px;
+    font: bold 18px "Courier New", monospace;
+    color: #0b1520;
+    background: #f2c94c;
+    border: 3px solid #0b1520;
+    box-shadow: 4px 4px 0 #0b1520;
+    cursor: pointer;
+  }
+  #yeniden-btn:hover { background: #ffe07a; }
+  #yeniden-btn:active { transform: translate(2px, 2px); box-shadow: 2px 2px 0 #0b1520; }
+  #yeniden-btn:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
+
+  /* ===== DİL SEÇİCİ (zemin şeridinin üzerinde, her ekranda görünür) ===== */
+  #dil-cubugu {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 6px;
+    z-index: 5;
+  }
+  #dil-cubugu button {
+    padding: 5px 10px;
+    font: bold 14px "Courier New", monospace;
+    color: #0b1520;
+    background: #ded895;
+    border: 3px solid #0b1520;
+    cursor: pointer;
+  }
+  #dil-cubugu button:hover { background: #fff3a8; }
+  #dil-cubugu button.aktif { background: #f2c94c; box-shadow: inset 0 -4px 0 #e8a317; }
+  #dil-cubugu button:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+</style>
+</head>
+<body>
+
+<div id="oyun-kutusu">
+  <canvas id="canvas" width="400" height="600"></canvas>
+
+  <!-- BAŞLANGIÇ EKRANI -->
+  <div id="baslangic" class="katman">
+    <h1>FLAPPY BIRD</h1>
+    <p id="t-baslat"></p>
+  </div>
+
+  <!-- OYUN BİTTİ EKRANI -->
+  <div id="bitis" class="katman gizli">
+    <h1 id="t-bitti"></h1>
+    <p class="skor-satiri"><span id="t-skor"></span> <span id="son-skor">0</span></p>
+    <p class="skor-satiri"><span id="t-enyuksek"></span> <span id="son-en-yuksek">0</span></p>
+    <button id="yeniden-btn"></button>
+    <p id="t-veya" style="font-size:14px;margin-top:12px"></p>
+  </div>
+
+  <!-- DİL SEÇİCİ: TR / EN / ES -->
+  <div id="dil-cubugu" role="group" aria-label="Dil / Language / Idioma">
+    <button type="button" data-dil="tr">TR</button>
+    <button type="button" data-dil="en">EN</button>
+    <button type="button" data-dil="es">ES</button>
+  </div>
+</div>
+
+<script>
+/* =====================================================
+   FLAPPY BIRD - Saf (Vanilla) JavaScript
+   ===================================================== */
+
+// ----- Canvas ve DOM elemanları -----
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const W = canvas.width;   // 400
+const H = canvas.height;  // 600
+
+const baslangicEkrani = document.getElementById('baslangic');
+const bitisEkrani = document.getElementById('bitis');
+const sonSkorEl = document.getElementById('son-skor');
+const sonEnYuksekEl = document.getElementById('son-en-yuksek');
+const yenidenBtn = document.getElementById('yeniden-btn');
+
+// ----- ÇOKLU DİL DESTEĞİ (Türkçe / İngilizce / İspanyolca) -----
+// Oyundaki tüm metinler burada tutulur. Yeni dil eklemek için
+// bir nesne daha ekleyip HTML'e bir buton koymak yeterlidir.
+const METINLER = {
+  tr: {
+    baslik: 'Flappy Bird',
+    baslat: "Oyuna Başlamak İçin<br>Tıkla veya Space'e Bas",
+    bitti: 'OYUN BİTTİ',
+    skor: 'Skor:',              // oyun sonu ekranı ve canvas üstü
+    enYuksek: 'En Yüksek Skor:', // oyun sonu ekranı
+    enYuksekKisa: 'En Yüksek:',  // canvas üstü (yer az olduğu için kısa)
+    yeniden: 'Yeniden Başla',
+    veya: "veya Space'e bas"
+  },
+  en: {
+    baslik: 'Flappy Bird',
+    baslat: 'Click or Press Space<br>to Start',
+    bitti: 'GAME OVER',
+    skor: 'Score:',
+    enYuksek: 'High Score:',
+    enYuksekKisa: 'Best:',
+    yeniden: 'Restart',
+    veya: 'or press Space'
+  },
+  es: {
+    baslik: 'Flappy Bird',
+    baslat: 'Haz clic o pulsa Espacio<br>para empezar',
+    bitti: 'FIN DEL JUEGO',
+    skor: 'Puntos:',
+    enYuksek: 'Récord:',
+    enYuksekKisa: 'Récord:',
+    yeniden: 'Reiniciar',
+    veya: 'o pulsa Espacio'
+  }
+};
+
+// Başlangıç dili: önce kayıtlı seçim, yoksa tarayıcı dili, o da yoksa Türkçe
+let dil = 'tr';
+try {
+  const kayitli = localStorage.getItem('flappyDil');
+  const tarayici = (navigator.language || 'tr').slice(0, 2).toLowerCase();
+  if (METINLER[kayitli]) dil = kayitli;
+  else if (METINLER[tarayici]) dil = tarayici;
+} catch (e) { /* localStorage yoksa varsayılan dil kalır */ }
+
+// Seçilen dili tüm arayüze uygular (HTML katmanları + buton durumu)
+function dilUygula(kod) {
+  dil = kod;
+  const t = METINLER[dil];
+  document.documentElement.lang = dil;
+  document.title = t.baslik;
+  document.getElementById('t-baslat').innerHTML = t.baslat;
+  document.getElementById('t-bitti').textContent = t.bitti;
+  document.getElementById('t-skor').textContent = t.skor;
+  document.getElementById('t-enyuksek').textContent = t.enYuksek;
+  document.getElementById('t-veya').textContent = t.veya;
+  yenidenBtn.textContent = t.yeniden;
+  // Aktif dil butonunu vurgula
+  document.querySelectorAll('#dil-cubugu button').forEach((b) => {
+    b.classList.toggle('aktif', b.dataset.dil === dil);
+    b.setAttribute('aria-pressed', b.dataset.dil === dil);
+  });
+  try { localStorage.setItem('flappyDil', dil); } catch (e) {}
+}
+
+// Dil butonlarına tıklanınca dili değiştir
+document.querySelectorAll('#dil-cubugu button').forEach((b) => {
+  b.addEventListener('click', () => {
+    dilUygula(b.dataset.dil);
+    b.blur(); // odak kalmasın: Space tuşu butona basmış gibi davranmasın
+  });
+});
+
+// ----- Oyun sabitleri (ayarlanabilir değerler) -----
+const YERCEKIMI = 0.45;        // her karede hıza eklenen ivme
+const ZIPLAMA = -7.5;          // zıplayınca verilen yukarı yönlü hız
+const MAKS_DUSUS_HIZI = 11;    // düşüş hızı sınırı
+const BORU_GENISLIK = 60;
+const BORU_BOSLUK = 150;       // üst ve alt boru arasındaki sabit boşluk
+const BORU_HIZ = 2.5;          // boruların sola kayma hızı
+const BORU_ARALIK = 220;       // iki boru arasındaki yatay mesafe (px)
+const ZEMIN_YUKSEKLIK = 70;    // alttaki zemin şeridinin yüksekliği
+const KUS_BOYUT = 28;
+
+// ----- Oyun durumu -----
+// Durumlar: 'bekle' (başlangıç), 'oyun' (oynanıyor), 'bitti' (game over)
+let durum = 'bekle';
+let kus, borular, skor, zeminKaymasi, kareSayaci;
+let enYuksek = 0;
+
+// En yüksek skoru tarayıcı hafızasından oku (erişilemezse 0 kalır)
+try {
+  enYuksek = parseInt(localStorage.getItem('flappyEnYuksek')) || 0;
+} catch (e) { /* localStorage kullanılamıyor, sorun değil */ }
+
+// ----- Oyunu sıfırla -----
+function sifirla() {
+  kus = {
+    x: 90,
+    y: H / 2 - 40,
+    hiz: 0,
+    boyut: KUS_BOYUT,
+    aci: 0
+  };
+  borular = [];
+  skor = 0;
+  zeminKaymasi = 0;
+  kareSayaci = 0;
+  // İlk boruyu hemen sağ kenarın dışına koy
+  boruEkle(W + 60);
+}
+
+// ----- Yeni boru çifti oluştur -----
+function boruEkle(x) {
+  // Boşluğun üst kenarı rastgele seçilir (kenarlardan 60px uzak)
+  const min = 60;
+  const maks = H - ZEMIN_YUKSEKLIK - BORU_BOSLUK - 60;
+  const bosluguUst = Math.floor(Math.random() * (maks - min + 1)) + min;
+  borular.push({ x: x, bosluguUst: bosluguUst, gecildi: false });
+}
+
+// ----- Zıplama -----
+function zipla() {
+  kus.hiz = ZIPLAMA;
+}
+
+// ----- Giriş (klavye / fare / dokunma) -----
+function girdi() {
+  if (durum === 'bekle') {
+    baslat();
+    zipla();
+  } else if (durum === 'oyun') {
+    zipla();
+  } else if (durum === 'bitti') {
+    // Game over ekranında kısa bir gecikme: yanlışlıkla hemen yeniden başlamasın
+    if (performance.now() - bitisZamani > 400) yenidenBaslat();
+  }
+}
+
+function baslat() {
+  durum = 'oyun';
+  baslangicEkrani.classList.add('gizli');
+}
+
+function yenidenBaslat() {
+  sifirla();
+  bitisEkrani.classList.add('gizli');
+  durum = 'oyun';
+  zipla();
+}
+
+let bitisZamani = 0;
+function oyunBitti() {
+  durum = 'bitti';
+  bitisZamani = performance.now();
+  // En yüksek skoru güncelle ve kaydet
+  if (skor > enYuksek) {
+    enYuksek = skor;
+    try { localStorage.setItem('flappyEnYuksek', enYuksek); } catch (e) {}
+  }
+  sonSkorEl.textContent = skor;
+  sonEnYuksekEl.textContent = enYuksek;
+  bitisEkrani.classList.remove('gizli');
+}
+
+// Klavye: Space tuşu
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space') {
+    e.preventDefault(); // sayfanın aşağı kaymasını engelle
+    if (!e.repeat) girdi();
+  }
+});
+// Fare ve dokunma (pointerdown ikisini de kapsar)
+canvas.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  girdi();
+});
+// Buton
+yenidenBtn.addEventListener('click', yenidenBaslat);
+
+// ----- Güncelleme (fizik ve mantık) -----
+function guncelle() {
+  kareSayaci++;
+
+  // Zemin her durumda kayar (bitti durumu hariç) – canlılık hissi verir
+  if (durum !== 'bitti') zeminKaymasi = (zeminKaymasi + BORU_HIZ) % 24;
+
+  if (durum === 'bekle') {
+    // Başlangıçta kuş yavaşça aşağı yukarı süzülür
+    kus.y = H / 2 - 40 + Math.sin(kareSayaci / 10) * 8;
+    return;
+  }
+
+  if (durum !== 'oyun') return;
+
+  // --- Kuş fiziği ---
+  kus.hiz += YERCEKIMI;                      // yerçekimi hızı sürekli artırır
+  if (kus.hiz > MAKS_DUSUS_HIZI) kus.hiz = MAKS_DUSUS_HIZI;
+  kus.y += kus.hiz;
+  // Kuşun açısı hızına göre değişir (yukarı çıkarken burun yukarı)
+  kus.aci = Math.max(-0.45, Math.min(1.2, kus.hiz / 12));
+
+  // --- Boruları hareket ettir ---
+  for (const b of borular) b.x -= BORU_HIZ;
+
+  // Son boru yeterince sola geldiyse yenisini sağdan doğur
+  const son = borular[borular.length - 1];
+  if (W - son.x >= BORU_ARALIK) boruEkle(W);
+
+  // Ekran dışına çıkan boruları sil
+  if (borular[0].x + BORU_GENISLIK < 0) borular.shift();
+
+  // --- Skor: kuş bir boruyu tamamen geçince +1 ---
+  for (const b of borular) {
+    if (!b.gecildi && b.x + BORU_GENISLIK < kus.x - kus.boyut / 2) {
+      b.gecildi = true;
+      skor++;
+    }
+  }
+
+  // --- Çarpışma tespiti ---
+  const yaricap = kus.boyut / 2 - 3; // biraz toleranslı (haksız ölümleri azaltır)
+  const kusSol = kus.x - yaricap, kusSag = kus.x + yaricap;
+  const kusUst = kus.y - yaricap, kusAlt = kus.y + yaricap;
+
+  // Zemine çarpma
+  if (kusAlt >= H - ZEMIN_YUKSEKLIK) {
+    kus.y = H - ZEMIN_YUKSEKLIK - kus.boyut / 2 + 3;
+    return oyunBitti();
+  }
+  // Tavana çarpma
+  if (kusUst <= 0) {
+    kus.y = yaricap;
+    kus.hiz = 0;
+  }
+  // Borulara çarpma (dikdörtgen - dikdörtgen kesişimi)
+  for (const b of borular) {
+    const yatayKesisim = kusSag > b.x && kusSol < b.x + BORU_GENISLIK;
+    if (yatayKesisim) {
+      const ustBoruAlt = b.bosluguUst;
+      const altBoruUst = b.bosluguUst + BORU_BOSLUK;
+      if (kusUst < ustBoruAlt || kusAlt > altBoruUst) return oyunBitti();
+    }
+  }
+}
+
+// ----- ÇİZİM FONKSİYONLARI -----
+
+// Gökyüzü, bulutlar ve uzak şehir silueti
+function arkaPlanCiz() {
+  // Gökyüzü: iki renkli retro degrade
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#4ec0ca');
+  g.addColorStop(1, '#b8ecf0');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+
+  // Bulutlar (yavaşça kayar – paralaks etkisi)
+  ctx.fillStyle = 'rgba(255,255,255,.85)';
+  for (let i = 0; i < 4; i++) {
+    const x = ((i * 170 - kareSayaci * 0.3) % (W + 120) + (W + 120)) % (W + 120) - 60;
+    const y = 80 + i * 70;
+    ctx.fillRect(x, y, 60, 16);
+    ctx.fillRect(x + 12, y - 12, 36, 14);
+  }
+
+  // Uzak şehir/bina silueti
+  ctx.fillStyle = '#8fd3c4';
+  const binalar = [40, 70, 50, 90, 60, 80, 45, 75, 55, 85];
+  for (let i = 0; i < binalar.length; i++) {
+    ctx.fillRect(i * 44, H - ZEMIN_YUKSEKLIK - binalar[i], 40, binalar[i]);
+  }
+}
+
+// Klasik Mario tarzı boru
+function boruCiz(b) {
+  const govde = '#5cb82e', koyu = '#2d6a15', acik = '#9be564';
+  const kapakH = 26, kapakEk = 5; // kapak yüksekliği ve taşma miktarı
+
+  // Üst boru: 0'dan boşluğun üstüne kadar
+  boruParcaCiz(b.x, 0, BORU_GENISLIK, b.bosluguUst, true);
+  // Alt boru: boşluğun altından zemine kadar
+  const altY = b.bosluguUst + BORU_BOSLUK;
+  boruParcaCiz(b.x, altY, BORU_GENISLIK, H - ZEMIN_YUKSEKLIK - altY, false);
+
+  function boruParcaCiz(x, y, w, h, ustMu) {
+    // Gövde
+    ctx.fillStyle = govde;
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = acik;                 // sol parlak şerit
+    ctx.fillRect(x + 6, y, 6, h);
+    ctx.fillStyle = koyu;                 // sağ gölge
+    ctx.fillRect(x + w - 10, y, 10, h);
+
+    // Kapak (borunun boşluğa bakan ucu)
+    const ky = ustMu ? y + h - kapakH : y;
+    ctx.fillStyle = govde;
+    ctx.fillRect(x - kapakEk, ky, w + kapakEk * 2, kapakH);
+    ctx.fillStyle = acik;
+    ctx.fillRect(x - kapakEk + 6, ky, 6, kapakH);
+    ctx.fillStyle = koyu;
+    ctx.fillRect(x + w + kapakEk - 10, ky, 10, kapakH);
+
+    // Kontur çizgileri
+    ctx.strokeStyle = '#0b1520';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(x, y, w, h);
+    ctx.strokeRect(x - kapakEk, ky, w + kapakEk * 2, kapakH);
+  }
+}
+
+// Zemin şeridi (kayan çizgilerle)
+function zeminCiz() {
+  const y = H - ZEMIN_YUKSEKLIK;
+  ctx.fillStyle = '#ded895';
+  ctx.fillRect(0, y, W, ZEMIN_YUKSEKLIK);
+  ctx.fillStyle = '#73bf2e';            // çim şeridi
+  ctx.fillRect(0, y, W, 14);
+  ctx.fillStyle = '#558c22';            // kayan çapraz çizgiler
+  for (let x = -24; x < W + 24; x += 24) {
+    ctx.fillRect(x - zeminKaymasi, y + 4, 12, 6);
+  }
+  ctx.fillStyle = '#0b1520';            // üst kontur
+  ctx.fillRect(0, y, W, 3);
+}
+
+// Sarı kuş: gövde, kanat, göz ve gaga
+function kusCiz() {
+  ctx.save();
+  ctx.translate(kus.x, kus.y);
+  ctx.rotate(kus.aci);
+  const r = kus.boyut / 2;
+
+  // Gövde (sarı kare, kontur ile)
+  ctx.fillStyle = '#f7d51d';
+  ctx.fillRect(-r, -r, kus.boyut, kus.boyut);
+  ctx.strokeStyle = '#0b1520';
+  ctx.lineWidth = 3;
+  ctx.strokeRect(-r, -r, kus.boyut, kus.boyut);
+
+  // Kanat (çırpma animasyonu: kareSayaci'na göre yukarı aşağı)
+  const kanatY = Math.floor(kareSayaci / 5) % 2 === 0 ? 2 : -3;
+  ctx.fillStyle = '#e8a317';
+  ctx.fillRect(-r + 3, kanatY + 2, 13, 8);
+  ctx.strokeRect(-r + 3, kanatY + 2, 13, 8);
+
+  // Göz
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(r - 12, -r + 4, 9, 9);
+  ctx.fillStyle = '#0b1520';
+  ctx.fillRect(r - 7, -r + 6, 4, 5);
+
+  // Gaga (turuncu)
+  ctx.fillStyle = '#f26b21';
+  ctx.fillRect(r - 1, 0, 11, 8);
+  ctx.strokeRect(r - 1, 0, 11, 8);
+
+  ctx.restore();
+}
+
+// Yazıyı kontur ile çizen yardımcı fonksiyon (okunaklı retro yazı)
+function yaziCiz(metin, x, y, boyut, hiza) {
+  ctx.font = 'bold ' + boyut + 'px "Courier New", monospace';
+  ctx.textAlign = hiza;
+  ctx.lineWidth = 5;
+  ctx.strokeStyle = '#0b1520';
+  ctx.strokeText(metin, x, y);
+  ctx.fillStyle = '#fff';
+  ctx.fillText(metin, x, y);
+}
+
+// Ekrandaki skor göstergesi (oyun sırasında üstte)
+function arayuzCiz() {
+  if (durum === 'oyun') {
+    yaziCiz(String(skor), W / 2, 70, 56, 'center');   // büyük anlık skor
+  }
+  const t = METINLER[dil];
+  yaziCiz(t.skor + ' ' + skor, 12, 28, 18, 'left');
+  yaziCiz(t.enYuksekKisa + ' ' + Math.max(enYuksek, skor), W - 12, 28, 18, 'right');
+}
+
+// Tüm sahneyi çiz
+function ciz() {
+  arkaPlanCiz();
+  for (const b of borular) boruCiz(b);
+  zeminCiz();
+  kusCiz();
+  arayuzCiz();
+}
+
+// ----- ANA DÖNGÜ -----
+// Sabit 60 FPS hızında çalışması için zaman farkı kullanılır;
+// böylece 120/144Hz ekranlarda oyun hızlanmaz.
+const ADIM = 1000 / 60;
+let sonZaman = 0, birikim = 0;
+
+function dongu(zaman) {
+  if (!sonZaman) sonZaman = zaman;
+  birikim += Math.min(zaman - sonZaman, 100); // sekme arka plandaysa sıçramayı önle
+  sonZaman = zaman;
+  while (birikim >= ADIM) {
+    guncelle();
+    birikim -= ADIM;
+  }
+  ciz();
+  requestAnimationFrame(dongu);
+}
+
+// ----- Başlat -----
+dilUygula(dil);
+sifirla();
+requestAnimationFrame(dongu);
+</script>
+</body>
+</html>
